@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ..models import Memory
+from ..storage.cache_utils import ensure_user_cache
 from ..types import (
     ConsolidationProposal,
     EmbeddingCallback,
@@ -110,11 +111,10 @@ def propose_consolidations(
     if len(memories) < 2:
         return []
 
-    # Ensure vector cache is populated
-    user_key = f"{user_id}:{config.default_namespace}"
-    if not vector_cache.has_user(user_key):
-        embeddings = store.get_all_embeddings(user_id, namespace=config.default_namespace)
-        vector_cache.build_user_index(user_key, embeddings)
+    # Ensure vector cache is populated for all namespaces the user's memories span
+    namespaces = {m.namespace for m in memories}
+    for ns in namespaces:
+        ensure_user_cache(store, vector_cache, user_id, ns)
 
     clusters = _find_clusters(memories, vector_cache, config)
     proposals: list[ConsolidationProposal] = []

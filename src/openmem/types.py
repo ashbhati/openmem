@@ -113,5 +113,5 @@ class MemoryStats:
     memories_below_threshold: int = 0
     last_decay_run: Optional[str] = None
     hours_since_last_decay: Optional[float] = None
-    embedding_model_mismatches: int = 0
+    distinct_embedding_models: int = 0
     recommendations: list[str] = field(default_factory=list)

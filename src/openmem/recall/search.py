@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..models import Memory
+from ..storage.cache_utils import ensure_user_cache
 from ..storage.sqlite_store import SQLiteStore
 from ..storage.vector_cache import VectorCache
 
@@ -22,18 +23,21 @@ def semantic_search(
     Lazily loads the user's vector index from SQLite if not already cached.
     Returns (Memory, score) pairs sorted by descending similarity.
     """
-    user_key = f"{user_id}:{namespace}"
-
-    # Lazy-load: build cache from store if user not present
-    if not vector_cache.has_user(user_key):
-        embeddings = store.get_all_embeddings(user_id, namespace=namespace)
-        vector_cache.build_user_index(user_key, embeddings)
+    user_key = ensure_user_cache(store, vector_cache, user_id, namespace)
 
     hits = vector_cache.search(user_key, query_embedding, top_k=top_k)
 
+    if not hits:
+        return []
+
+    # Batch fetch all memories in a single query
+    hit_ids = [memory_id for memory_id, _ in hits]
+    memories = store.batch_get(hit_ids)
+    memory_map = {m.id: m for m in memories}
+
     results: list[tuple[Memory, float]] = []
     for memory_id, score in hits:
-        memory = store.get(memory_id)
+        memory = memory_map.get(memory_id)
         if memory is not None and memory.is_active:
             results.append((memory, score))
     return results

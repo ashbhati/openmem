@@ -6,8 +6,8 @@
 [![PyPI version](https://badge.fury.io/py/openmem.svg)](https://pypi.org/project/openmem/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen.svg)]()
-[![Coverage](https://img.shields.io/badge/coverage-92%25-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-96%20passing-brightgreen.svg)]()
+[![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen.svg)]()
 -->
 
 ## Why OpenMem?

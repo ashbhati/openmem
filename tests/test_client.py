@@ -293,7 +293,7 @@ class TestStatsEdgeCases:
         m2 = m.add(USER, "Memory two", embedding_model="model-b")
 
         stats = m.stats()
-        assert stats.embedding_model_mismatches >= 1
+        assert stats.distinct_embedding_models >= 2
         assert any("embedding" in r.lower() for r in stats.recommendations)
         m.close()
 

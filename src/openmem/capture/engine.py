@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from ..config import OpenMemConfig
 from ..models import Memory
+from ..storage.cache_utils import ensure_user_cache
 from ..storage.sqlite_store import SQLiteStore
 from ..storage.vector_cache import VectorCache
 from ..types import (
@@ -48,14 +49,6 @@ class CaptureEngine:
         self._embedding_callback = embedding_callback
         self._config = config
 
-    def _ensure_user_cache(self, user_id: str, namespace: str) -> str:
-        """Ensure vector cache is populated for user. Returns user_key."""
-        user_key = f"{user_id}:{namespace}"
-        if not self._vector_cache.has_user(user_key):
-            embeddings = self._store.get_all_embeddings(user_id, namespace=namespace)
-            self._vector_cache.build_user_index(user_key, embeddings)
-        return user_key
-
     def capture(
         self,
         user_id: str,
@@ -86,7 +79,7 @@ class CaptureEngine:
         meta = metadata or {}
 
         # Ensure vector cache is ready for this user
-        user_key = self._ensure_user_cache(user_id, ns)
+        user_key = ensure_user_cache(self._store, self._vector_cache, user_id, ns)
 
         # Step 1: Extract raw memories via LLM
         raw_memories = extract_memories(

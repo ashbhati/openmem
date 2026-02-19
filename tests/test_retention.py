@@ -309,9 +309,8 @@ class TestConflict:
         m.close()
 
     def test_resolve_conflict_supersede_strategy(self, tmp_path: Path):
-        """SUPERSEDE strategy should supersede the older memory."""
+        """SUPERSEDE strategy is directional: memory_a always wins."""
         from openmem.retention.conflict import resolve_conflict
-        from datetime import timedelta
 
         def embed_fn(text: str) -> list[float]:
             return [0.5] * 8
@@ -322,11 +321,6 @@ class TestConflict:
         m1 = m.add(USER, "User prefers Python")
         m2 = m.add(USER, "User dislikes Python")
 
-        # Make m1 older
-        mem1 = m.get(m1.id)
-        mem1.created_at = mem1.created_at - timedelta(days=1)
-        m._store.update(mem1)
-
         resolve_conflict(
             store=m._store,
             vector_cache=m._vector_cache,
@@ -335,10 +329,10 @@ class TestConflict:
             strategy=ConflictStrategy.SUPERSEDE,
         )
 
-        # Newer (m2) should win, older (m1) should be superseded
-        assert m.get(m1.id).is_active is False
-        assert m.get(m1.id).superseded_by == m2.id
-        assert m.get(m2.id).is_active is True
+        # memory_a (m1) always wins, memory_b (m2) is superseded
+        assert m.get(m1.id).is_active is True
+        assert m.get(m2.id).is_active is False
+        assert m.get(m2.id).superseded_by == m1.id
         m.close()
 
     def test_resolve_conflict_keep_newer(self, tmp_path: Path):

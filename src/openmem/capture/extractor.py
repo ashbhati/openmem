@@ -14,6 +14,11 @@ def _format_conversation(messages: list[dict[str, str]]) -> str:
     """Format a list of message dicts into a readable conversation string."""
     lines: list[str] = []
     for msg in messages:
+        if not isinstance(msg, dict):
+            raise TypeError(
+                f"Each message must be a dict with 'role' and 'content' keys, "
+                f"got {type(msg).__name__}"
+            )
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
         lines.append(f"{role}: {content}")
@@ -80,15 +85,12 @@ def _validate_memory_dict(item: dict[str, Any]) -> dict[str, Any] | None:
 def extract_memories(
     llm_callback: LLMCallback,
     messages: list[dict[str, str]],
-    existing_content_hashes: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Extract memories from conversation messages using the LLM callback.
 
     Args:
         llm_callback: Function that calls the developer's LLM.
         messages: Conversation messages as list of {"role": ..., "content": ...}.
-        existing_content_hashes: Optional set of hashes for pre-filtering
-            (not used in extraction itself, reserved for future use).
 
     Returns:
         List of dicts with keys: content, memory_type, source, confidence.

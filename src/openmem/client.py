@@ -5,7 +5,9 @@ The SQLite of AI memory: embedded, zero-dependency, lifecycle-aware.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import threading
 from datetime import datetime
 from typing import Any, Optional
 
@@ -64,7 +66,7 @@ class OpenMem:
         storage_path: Optional[str] = None,
         config: Optional[OpenMemConfig] = None,
     ) -> None:
-        self._config = config or OpenMemConfig()
+        self._config = dataclasses.replace(config) if config else OpenMemConfig()
         if storage_path:
             self._config.storage_path = storage_path
 
@@ -81,6 +83,9 @@ class OpenMem:
         self._vector_cache = VectorCache(
             max_users=self._config.vector_cache_max_users,
         )
+
+        # Lock for read-modify-write operations on memories
+        self._lock = threading.Lock()
 
         # Lazy imports for engines (set up in respective milestones)
         self._capture_engine = None
@@ -126,7 +131,7 @@ class OpenMem:
         memory_type: MemoryType = MemoryType.FACT,
         source: MemorySource = MemorySource.EXPLICIT,
         confidence: float = 1.0,
-        lifespan: Optional[MemoryLifespan] = None,
+        lifespan: Optional[MemoryLifespan | str] = None,
         namespace: Optional[str] = None,
         ttl: Optional[datetime] = None,
         metadata: Optional[dict[str, Any]] = None,
@@ -142,6 +147,14 @@ class OpenMem:
         """
         now = _now()
         ns = namespace or self._config.default_namespace
+        if lifespan is not None and isinstance(lifespan, str):
+            try:
+                lifespan = MemoryLifespan(lifespan)
+            except ValueError:
+                valid = [e.value for e in MemoryLifespan]
+                raise ValueError(
+                    f"Invalid lifespan '{lifespan}'. Valid values: {valid}"
+                )
         ls = lifespan or self._config.default_lifespan
 
         # Generate embedding if not provided
@@ -216,36 +229,37 @@ class OpenMem:
 
         Returns the updated Memory, or None if not found.
         """
-        memory = self._store.get(memory_id)
-        if memory is None:
-            return None
+        with self._lock:
+            memory = self._store.get(memory_id)
+            if memory is None:
+                return None
 
-        old_content = memory.content
-        if content is not None:
-            memory.content = content
-            memory.content_hash = _content_hash(content)
-        if memory_type is not None:
-            memory.memory_type = memory_type
-        if confidence is not None:
-            memory.confidence = confidence
-        if lifespan is not None:
-            memory.lifespan = lifespan
-        if metadata is not None:
-            memory.metadata = metadata
+            old_content = memory.content
+            if content is not None:
+                memory.content = content
+                memory.content_hash = _content_hash(content)
+            if memory_type is not None:
+                memory.memory_type = memory_type
+            if confidence is not None:
+                memory.confidence = confidence
+            if lifespan is not None:
+                memory.lifespan = lifespan
+            if metadata is not None:
+                memory.metadata = metadata
 
-        memory.version += 1
+            memory.version += 1
 
-        # Re-embed if content changed
-        if content is not None and content != old_content and self._embedding_callback:
-            memory.embedding = self._embedding_callback(content)
-            # Update vector cache
-            user_key = f"{memory.user_id}:{memory.namespace}"
-            self._vector_cache.remove_from_user(user_key, memory.id)
-            if memory.embedding:
-                self._vector_cache.add_to_user(user_key, memory.id, memory.embedding)
+            # Re-embed if content changed
+            if content is not None and content != old_content and self._embedding_callback:
+                memory.embedding = self._embedding_callback(content)
+                # Update vector cache
+                user_key = f"{memory.user_id}:{memory.namespace}"
+                self._vector_cache.remove_from_user(user_key, memory.id)
+                if memory.embedding:
+                    self._vector_cache.add_to_user(user_key, memory.id, memory.embedding)
 
-        self._store.update(memory)
-        return memory
+            self._store.update(memory)
+            return memory
 
     def delete(self, memory_id: str) -> bool:
         """Hard-delete a memory (atomic: SQLite + cache invalidation).
@@ -267,13 +281,17 @@ class OpenMem:
 
         Returns count of memories deleted.
         """
-        # Invalidate all possible namespace caches for this user
-        memories = self._store.list(user_id=user_id, active_only=False, limit=100000)
-        namespaces = {m.namespace for m in memories}
+        # Get distinct namespaces via lightweight SQL query (no full Memory loading)
+        namespaces = self._store.get_distinct_namespaces(user_id)
+
+        # Delete all memories first
+        count = self._store.delete_all(user_id)
+
+        # Invalidate all namespace caches for this user
         for ns in namespaces:
             self._vector_cache.invalidate(f"{user_id}:{ns}")
 
-        return self._store.delete_all(user_id)
+        return count
 
     def export(self, user_id: str, format: str = "json") -> str:
         """Export all memories for a user.
@@ -285,6 +303,9 @@ class OpenMem:
         Returns:
             Serialized string of all memories.
         """
+        import csv
+        import io
+
         memories = self._store.list(
             user_id=user_id, active_only=False, limit=100000
         )
@@ -302,21 +323,19 @@ class OpenMem:
                 "last_accessed", "access_count", "lifespan", "version",
                 "is_active",
             ]
-            lines = [",".join(headers)]
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(headers)
             for m in memories:
-                # Escape content for CSV: double any internal quotes, then wrap in quotes
-                escaped_content = m.content.replace('"', '""')
-                row = [
-                    m.id, m.user_id, m.namespace,
-                    f'"{escaped_content}"',
+                writer.writerow([
+                    m.id, m.user_id, m.namespace, m.content,
                     m.memory_type.value, m.source.value,
                     str(m.confidence), str(m.strength),
                     m.created_at.isoformat(), m.last_accessed.isoformat(),
                     str(m.access_count), m.lifespan.value,
                     str(m.version), str(m.is_active),
-                ]
-                lines.append(",".join(row))
-            return "\n".join(lines)
+                ])
+            return output.getvalue().rstrip("\r\n")
         else:
             raise ValueError(f"Unsupported format: {format}. Use 'json' or 'csv'.")
 
@@ -324,12 +343,9 @@ class OpenMem:
 
     def _ensure_user_cache(self, user_id: str, namespace: Optional[str] = None) -> str:
         """Ensure the vector cache is populated for a user. Returns user_key."""
+        from .storage.cache_utils import ensure_user_cache
         ns = namespace or self._config.default_namespace
-        user_key = f"{user_id}:{ns}"
-        if not self._vector_cache.has_user(user_key):
-            embeddings = self._store.get_all_embeddings(user_id, namespace=ns)
-            self._vector_cache.build_user_index(user_key, embeddings)
-        return user_key
+        return ensure_user_cache(self._store, self._vector_cache, user_id, ns)
 
     # --- Placeholder methods for engines (implemented in M2-M4) ---
 
@@ -338,7 +354,7 @@ class OpenMem:
         user_id: str,
         messages: list[dict[str, str]],
         namespace: Optional[str] = None,
-        lifespan: Optional[str] = None,
+        lifespan: Optional[MemoryLifespan | str] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> list[Memory]:
         """Extract memories from a conversation using the LLM callback.
@@ -355,7 +371,15 @@ class OpenMem:
                 embedding_callback=self._embedding_callback,
                 config=self._config,
             )
-        ls = MemoryLifespan(lifespan) if lifespan else None
+        if lifespan is not None and isinstance(lifespan, str):
+            try:
+                lifespan = MemoryLifespan(lifespan)
+            except ValueError:
+                valid = [e.value for e in MemoryLifespan]
+                raise ValueError(
+                    f"Invalid lifespan '{lifespan}'. Valid values: {valid}"
+                )
+        ls = lifespan if lifespan else None
         return self._capture_engine.capture(
             user_id=user_id,
             messages=messages,
@@ -369,7 +393,7 @@ class OpenMem:
         user_id: str,
         conversations: list[list[dict[str, str]]],
         namespace: Optional[str] = None,
-        lifespan: Optional[str] = None,
+        lifespan: Optional[MemoryLifespan | str] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> list[Memory]:
         """Extract memories from multiple conversations."""
@@ -530,33 +554,29 @@ class OpenMem:
             user_id=user_id, namespace=namespace, active_only=True, limit=100000
         )
         count = 0
+        affected_namespaces: set[str] = set()
         for memory in memories:
             memory.embedding = self._embedding_callback(memory.content)
             self._store.update(memory)
+            affected_namespaces.add(memory.namespace)
             count += 1
 
-        # Rebuild vector cache for this user
-        ns = namespace or self._config.default_namespace
-        self._vector_cache.invalidate(f"{user_id}:{ns}")
+        # Rebuild vector cache for all affected namespaces
+        for ns in affected_namespaces:
+            self._vector_cache.invalidate(f"{user_id}:{ns}")
 
         return count
 
     def stats(self) -> MemoryStats:
-        """Health check — system stats and recommendations."""
+        """Health check — system stats and recommendations (uses SQL aggregates)."""
         total = self._store.count()
         active = self._store.count(active_only=True)
         inactive = self._store.count(inactive_only=True)
 
-        # Compute average strength of active memories
-        all_active = self._store.get_active_memories()
-        avg_strength = (
-            sum(m.strength for m in all_active) / len(all_active)
-            if all_active
-            else 0.0
-        )
-        below_threshold = sum(
-            1 for m in all_active
-            if m.strength < self._config.strength_threshold
+        # Use SQL aggregates instead of loading all memories
+        avg_strength = self._store.avg_strength(active_only=True)
+        below_threshold = self._store.count_below_threshold(
+            self._config.strength_threshold
         )
 
         # Check last decay run
@@ -566,13 +586,9 @@ class OpenMem:
             last_dt = datetime.fromisoformat(last_decay)
             hours_since = (_now() - last_dt).total_seconds() / 3600.0
 
-        # Embedding model check
-        model_mismatches = 0
-        if self._embedding_callback and all_active:
-            # Check first memory's model against others
-            models = {m.embedding_model for m in all_active if m.embedding_model}
-            if len(models) > 1:
-                model_mismatches = len(models) - 1
+        # Embedding model check via SQL
+        models = self._store.distinct_embedding_models()
+        distinct_models = len(models)
 
         recommendations: list[str] = []
         if hours_since is not None and hours_since > 24:
@@ -587,9 +603,9 @@ class OpenMem:
             recommendations.append(
                 f"{below_threshold} memories below strength threshold — consider running mem.purge()"
             )
-        if model_mismatches > 0:
+        if distinct_models > 1:
             recommendations.append(
-                f"{model_mismatches + 1} different embedding models detected. "
+                f"{distinct_models} different embedding models detected. "
                 "Consider running mem.reembed() for consistency."
             )
 
@@ -601,7 +617,7 @@ class OpenMem:
             memories_below_threshold=below_threshold,
             last_decay_run=last_decay,
             hours_since_last_decay=round(hours_since, 2) if hours_since else None,
-            embedding_model_mismatches=model_mismatches,
+            distinct_embedding_models=distinct_models,
             recommendations=recommendations,
         )
 

@@ -178,7 +178,9 @@ class SQLiteStore:
                     VALUES ('delete', old.rowid, old.content);
                 END;
 
-                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                DROP TRIGGER IF EXISTS memories_au;
+                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories
+                WHEN OLD.content != NEW.content BEGIN
                     INSERT INTO memories_fts(memories_fts, rowid, content)
                     VALUES ('delete', old.rowid, old.content);
                     INSERT INTO memories_fts(rowid, content)
@@ -342,6 +344,15 @@ class SQLiteStore:
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    def get_distinct_namespaces(self, user_id: str) -> list[str]:
+        """Return distinct namespaces for a user (lightweight query)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT namespace FROM memories WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+        return [row["namespace"] for row in rows]
 
     def delete_all(self, user_id: str) -> int:
         """Hard-delete ALL memories for a user. Returns count deleted."""
@@ -518,6 +529,48 @@ class SQLiteStore:
                 (key, value),
             )
             conn.commit()
+
+    def batch_get(self, ids: list[str]) -> list[Memory]:
+        """Retrieve multiple memories by ID in a single query.
+
+        Returns memories in the order of the provided IDs.
+        Missing IDs are silently skipped.
+        """
+        if not ids:
+            return []
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT * FROM memories WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        row_map = {row["id"]: _row_to_memory(row) for row in rows}
+        return [row_map[mid] for mid in ids if mid in row_map]
+
+    def avg_strength(self, active_only: bool = True) -> float:
+        """Compute average strength via SQL aggregate."""
+        conn = self._get_conn()
+        condition = "WHERE is_active = 1" if active_only else ""
+        row = conn.execute(
+            f"SELECT AVG(strength) as avg_str FROM memories {condition}"
+        ).fetchone()
+        return row["avg_str"] if row["avg_str"] is not None else 0.0
+
+    def count_below_threshold(self, threshold: float) -> int:
+        """Count active memories with strength below threshold."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM memories WHERE is_active = 1 AND strength < ?",
+            (threshold,),
+        ).fetchone()
+        return row["cnt"]
+
+    def distinct_embedding_models(self) -> set[str]:
+        """Return distinct non-empty embedding models from active memories."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT embedding_model FROM memories WHERE is_active = 1 AND embedding_model != ''"
+        ).fetchall()
+        return {row["embedding_model"] for row in rows}
 
     def close(self) -> None:
         """Close the thread-local connection."""

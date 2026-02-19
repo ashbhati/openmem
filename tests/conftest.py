@@ -125,7 +125,6 @@ def mem(tmp_db_path: Path) -> OpenMem:
     instance = OpenMem(
         llm_callback=_mock_llm,
         embedding_callback=_mock_embedding,
-        storage_path=str(tmp_db_path),
         config=config,
     )
     yield instance

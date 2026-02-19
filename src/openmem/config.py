@@ -54,6 +54,22 @@ class OpenMemConfig:
     # SQLite
     sqlite_busy_timeout_ms: int = 5000
 
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.semantic_weight <= 1.0):
+            raise ValueError(f"semantic_weight must be in [0, 1], got {self.semantic_weight}")
+        if not (0.0 <= self.strength_threshold <= 1.0):
+            raise ValueError(f"strength_threshold must be in [0, 1], got {self.strength_threshold}")
+        if not (0.0 <= self.conflict_similarity_threshold <= 1.0):
+            raise ValueError(f"conflict_similarity_threshold must be in [0, 1], got {self.conflict_similarity_threshold}")
+        if not (0.0 <= self.dedup_similarity_threshold <= 1.0):
+            raise ValueError(f"dedup_similarity_threshold must be in [0, 1], got {self.dedup_similarity_threshold}")
+        if self.max_memories_per_recall <= 0:
+            raise ValueError(f"max_memories_per_recall must be > 0, got {self.max_memories_per_recall}")
+        if self.vector_cache_max_users <= 0:
+            raise ValueError(f"vector_cache_max_users must be > 0, got {self.vector_cache_max_users}")
+        if self.sqlite_busy_timeout_ms <= 0:
+            raise ValueError(f"sqlite_busy_timeout_ms must be > 0, got {self.sqlite_busy_timeout_ms}")
+
     @property
     def resolved_storage_path(self) -> Path:
         """Return the storage path with ~ expanded."""

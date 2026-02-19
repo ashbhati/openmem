@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ..storage.cache_utils import ensure_user_cache
 from ..types import ConflictPair, ConflictStrategy, LLMCallback, LLMRequest
 from .._utils import utc_now as _now
 
@@ -55,11 +56,10 @@ def find_conflicts(
     if len(memories) < 2:
         return []
 
-    # Ensure vector cache is populated
-    user_key = f"{user_id}:{config.default_namespace}"
-    if not vector_cache.has_user(user_key):
-        embeddings = store.get_all_embeddings(user_id, namespace=config.default_namespace)
-        vector_cache.build_user_index(user_key, embeddings)
+    # Ensure vector cache is populated for all namespaces the user's memories span
+    namespaces = {m.namespace for m in memories}
+    for ns in namespaces:
+        ensure_user_cache(store, vector_cache, user_id, ns)
 
     threshold = config.conflict_similarity_threshold
     checked: set[tuple[str, str]] = set()
@@ -70,6 +70,7 @@ def find_conflicts(
         if not memory.embedding:
             continue
 
+        user_key = f"{memory.user_id}:{memory.namespace}"
         results = vector_cache.search(user_key, memory.embedding, top_k=20)
 
         for mem_id, score in results:
@@ -145,7 +146,11 @@ def resolve_conflict(
         user_key = f"{loser.user_id}:{loser.namespace}"
         vector_cache.remove_from_user(user_key, loser.id)
 
-    if strategy == ConflictStrategy.SUPERSEDE or strategy == ConflictStrategy.KEEP_NEWER:
+    if strategy == ConflictStrategy.SUPERSEDE:
+        # Directional: memory_a always supersedes memory_b
+        _supersede(memory_a, memory_b)
+
+    elif strategy == ConflictStrategy.KEEP_NEWER:
         # Newer supersedes older
         if memory_a.created_at >= memory_b.created_at:
             _supersede(memory_a, memory_b)

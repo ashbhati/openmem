@@ -13,6 +13,10 @@ from ..types import EmbeddingCallback, MemoryType
 from .ranking import apply_filters, merge_and_rank
 from .search import keyword_search, semantic_search
 
+# Cap on stored access timestamps per memory. Very old timestamps contribute
+# near-zero to the ACT-R activation sum, so trimming has negligible effect.
+MAX_ACCESS_TIMESTAMPS = 500
+
 
 def _escape_fts5_query(query: str) -> str:
     """Wrap each term in double quotes to avoid FTS5 syntax errors.
@@ -124,6 +128,8 @@ class RecallEngine:
             now = datetime.now(timezone.utc)
             for memory in memories:
                 memory.access_timestamps.append(now)
+                if len(memory.access_timestamps) > MAX_ACCESS_TIMESTAMPS:
+                    memory.access_timestamps = memory.access_timestamps[-MAX_ACCESS_TIMESTAMPS:]
                 memory.access_count += 1
                 memory.last_accessed = now
                 self._store.update(memory)
