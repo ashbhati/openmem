@@ -1008,30 +1008,30 @@ class TestIssue16ConftestFixture:
 # ---------------------------------------------------------------------------
 
 class TestIssue17ReadmeBadges:
-    """Issue 17: README.md badges must state 96 passing tests and 97% coverage."""
+    """Issue 17: README.md badges must state current test/coverage numbers."""
 
-    def test_readme_badge_96_tests(self):
+    def test_readme_badge_203_tests(self):
         readme_path = Path("/Users/ashishbhatia/ClaudeProjects/OpenMem/README.md")
         assert readme_path.exists(), "README.md must exist"
         content = readme_path.read_text()
-        assert "96" in content, (
-            "README must mention '96' (passing tests badge)"
+        assert "203" in content, (
+            "README must mention '203' (passing tests badge)"
         )
 
-    def test_readme_badge_97_coverage(self):
+    def test_readme_badge_98_coverage(self):
         readme_path = Path("/Users/ashishbhatia/ClaudeProjects/OpenMem/README.md")
         content = readme_path.read_text()
-        assert "97" in content, (
-            "README must mention '97' (coverage badge)"
+        assert "98" in content, (
+            "README must mention '98' (coverage badge)"
         )
 
     def test_readme_badges_in_comment_block(self):
         """The badge lines must be present (even if inside HTML comment)."""
         readme_path = Path("/Users/ashishbhatia/ClaudeProjects/OpenMem/README.md")
         content = readme_path.read_text()
-        # Both numbers 96 and 97 must appear somewhere
-        assert "96" in content and "97" in content, (
-            "README must contain both '96' and '97'"
+        # Both numbers 203 and 98 must appear somewhere
+        assert "203" in content and "98" in content, (
+            "README must contain both '203' and '98'"
         )
 
 

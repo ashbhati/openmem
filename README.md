@@ -6,8 +6,8 @@
 [![PyPI version](https://badge.fury.io/py/openmem.svg)](https://pypi.org/project/openmem/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-96%20passing-brightgreen.svg)]()
-[![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-203%20passing-brightgreen.svg)]()
+[![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen.svg)]()
 -->
 
 ## Why OpenMem?
@@ -35,6 +35,7 @@ mem = OpenMem(
 
 - **Embedded** -- single `.db` file, zero infrastructure, no servers, no Docker
 - **BYO LLM** -- zero LLM SDK dependencies; you provide callback functions for your model of choice
+- **MCP Server** -- expose OpenMem to any AI agent via the [Model Context Protocol](#mcp-server)
 - **Memory lifecycle** -- ACT-R power-law decay, two-phase consolidation, conflict resolution
 - **Ghost-memory-free** -- SQLite is the single source of truth; vector index is a derived cache
 - **Hybrid search** -- semantic (cosine similarity) + keyword (FTS5), configurable ranking weights
@@ -94,6 +95,138 @@ mem.close()
 ```
 
 For a complete runnable example with mock callbacks (no API keys needed), see [`examples/quickstart.py`](examples/quickstart.py).
+
+## MCP Server
+
+OpenMem ships with a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that exposes the full API as tools. Any MCP-compatible agent or IDE can use OpenMem as persistent memory -- Claude Desktop, Cursor, VS Code + Copilot, Windsurf, and more.
+
+### Installation
+
+```bash
+pip install "openmem[mcp]"
+```
+
+### Running the Server
+
+```bash
+# Via entry point
+openmem-mcp
+
+# Or as a Python module
+python -m openmem.mcp
+```
+
+### Configuration
+
+The MCP server is configured entirely via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENMEM_STORAGE_PATH` | `~/.openmem/memory.db` | SQLite database location |
+| `OPENMEM_EMBEDDING_PROVIDER` | `openai` | Embedding provider (`openai` or `none`) |
+| `OPENMEM_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
+| `OPENMEM_EMBEDDING_API_KEY` | -- | API key (falls back to `OPENAI_API_KEY`) |
+| `OPENMEM_EMBEDDING_BASE_URL` | `https://api.openai.com/v1` | Base URL (supports any OpenAI-compatible API) |
+| `OPENMEM_EMBEDDING_DIMENSIONS` | -- | Optional dimension override |
+
+Set `OPENMEM_EMBEDDING_PROVIDER=none` to disable semantic search and use keyword-only (FTS5) search. This requires no API keys.
+
+### Claude Desktop Integration
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "openmem": {
+      "command": "openmem-mcp",
+      "env": {
+        "OPENAI_API_KEY": "sk-..."
+      }
+    }
+  }
+}
+```
+
+### Cursor / VS Code Integration
+
+Add to your `.cursor/mcp.json` or VS Code MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "openmem": {
+      "command": "openmem-mcp",
+      "env": {
+        "OPENAI_API_KEY": "sk-..."
+      }
+    }
+  }
+}
+```
+
+### Using a Local/Self-Hosted Embedding API
+
+OpenMem's MCP server works with any OpenAI-compatible embedding endpoint. To use a local model (e.g., via Ollama, vLLM, or LiteLLM):
+
+```json
+{
+  "mcpServers": {
+    "openmem": {
+      "command": "openmem-mcp",
+      "env": {
+        "OPENMEM_EMBEDDING_BASE_URL": "http://localhost:11434/v1",
+        "OPENMEM_EMBEDDING_MODEL": "nomic-embed-text",
+        "OPENMEM_EMBEDDING_API_KEY": "not-needed"
+      }
+    }
+  }
+}
+```
+
+### Available MCP Tools
+
+The server exposes 13 tools:
+
+| Tool | Description |
+|------|-------------|
+| `add_memory` | Store a new memory (auto-generates embedding if configured) |
+| `search_memories` | Semantic + keyword search (read-only, no reinforcement) |
+| `recall_memories` | Search + reinforce (strengthens accessed memories, models human recall) |
+| `build_context` | Build a formatted context string for LLM system prompts |
+| `get_memory` | Retrieve a single memory by ID |
+| `list_memories` | List memories with filters (type, namespace) and pagination |
+| `update_memory` | Update fields (auto re-embeds on content change) |
+| `delete_memory` | Permanently delete a single memory |
+| `delete_all_memories` | Delete all memories for a user (GDPR right to erasure) |
+| `export_memories` | Export as JSON or CSV |
+| `memory_stats` | System health stats and actionable recommendations |
+| `run_decay` | Apply ACT-R power-law decay to all active memories |
+| `purge_memories` | Permanently remove all soft-deleted (decayed) memories |
+
+### MCP Tool Examples
+
+Once connected, the agent can use tools like this:
+
+```
+Agent: I'll remember that for you.
+→ calls add_memory(user_id="user_123", content="Prefers Python over JavaScript", memory_type="preference")
+
+Agent: Let me check what I know about your coding preferences.
+→ calls recall_memories(user_id="user_123", query="programming language preferences")
+
+Agent: Here's your memory health summary.
+→ calls memory_stats()
+```
+
+### Why MCP Instead of a Language-Specific SDK?
+
+The MCP server approach means:
+
+- **One implementation** -- the battle-tested Python engine (203 tests, 98% coverage) serves all clients
+- **Universal reach** -- any MCP-compatible agent gets OpenMem instantly, regardless of language
+- **No divergence** -- no risk of behavior differences between language ports
+- **Minimal latency** -- MCP runs locally over stdio; no network overhead
 
 ## Core API
 
@@ -240,7 +373,7 @@ mem = OpenMem(
 ## How It Works
 
 ```
-Your Application
+Your Application / MCP Client
        |
        v
 +---------------------------------------------+
@@ -268,7 +401,8 @@ Your Application
 |       |              |                       |
 |  +----v--------------v----+                  |
 |  | LLM Adapter Layer      |                  |
-|  | (your callbacks)       |                  |
+|  | (your callbacks / MCP  |                  |
+|  |  embedding provider)   |                  |
 |  +------------------------+                  |
 +---------------------------------------------+
 ```
@@ -362,6 +496,7 @@ The default `keep_both` is intentionally conservative -- "I prefer mornings" and
 | **Deployment** | Embedded, single `.db` file | Requires vector DB (Qdrant default) |
 | **Dependencies** | `numpy` only | Ships with `openai`, provider SDKs |
 | **Infrastructure** | None -- `pip install` and go | Vector DB server required |
+| **MCP support** | Built-in MCP server | Not available |
 | **Memory lifecycle** | Decay + consolidation + conflict as integrated system | Basic memory management |
 | **Atomic deletion** | SQLite single source of truth, vector cache derived | No guaranteed cross-store atomicity |
 | **LLM vendor lock-in** | None -- BYO callbacks | Multi-provider, but SDKs bundled |
@@ -382,7 +517,8 @@ See the [`examples/`](examples/) directory:
 ## Requirements
 
 - Python 3.10+
-- `numpy >= 1.24.0`
+- `numpy >= 1.24.0` (core library)
+- `mcp >= 1.0.0` (optional, for MCP server -- install with `pip install "openmem[mcp]"`)
 - Everything else is Python stdlib (`sqlite3`, `json`, `datetime`, `hashlib`)
 
 ## Contributing
@@ -391,15 +527,15 @@ Contributions are welcome. Please open an issue first to discuss what you'd like
 
 ```bash
 # Clone and install in development mode
-git clone https://github.com/your-org/openmem.git
+git clone https://github.com/ashbhati/openmem.git
 cd openmem
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Run tests
+# Run tests (203 tests)
 python -m pytest tests/ -v
 
-# Run tests with coverage
+# Run tests with coverage (98%)
 python -m pytest tests/ --cov=openmem --cov-report=term-missing
 ```
 
