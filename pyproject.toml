@@ -41,6 +41,7 @@ dev = [
 
 [project.scripts]
 openmem-mcp = "openmem.mcp.server:main"
+openmem-setup = "openmem.mcp.setup:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openmem"]

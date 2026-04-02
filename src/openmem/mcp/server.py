@@ -29,7 +29,7 @@ from openmem.types import (
     MemorySource,
     MemoryType,
 )
-from .providers import get_embedding_callback
+from .providers import get_embedding_callback, load_config_env
 
 logger = logging.getLogger("openmem.mcp")
 
@@ -52,6 +52,7 @@ def _get_client() -> OpenMem:
     """Get or create the OpenMem client singleton."""
     global _client
     if _client is None:
+        load_config_env()
         storage_path = os.environ.get("OPENMEM_STORAGE_PATH", "")
         config = OpenMemConfig()
         if storage_path:

@@ -34,12 +34,14 @@ from openmem.mcp.server import (
     update_memory,
 )
 import openmem.mcp.server as server_module
+import openmem.mcp.providers as providers_module
 
 
 @pytest.fixture(autouse=True)
 def _fresh_client():
     """Reset the singleton client between tests."""
     server_module._client = None
+    providers_module._config_loaded = False
     # Use a unique DB per test to avoid interference
     db_path = os.path.join(_tmp_dir, f"test_{uuid.uuid4().hex}.db")
     os.environ["OPENMEM_STORAGE_PATH"] = db_path

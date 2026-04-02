@@ -16,9 +16,46 @@ import json
 import logging
 import os
 import urllib.request
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("openmem.mcp")
+
+_config_loaded = False
+
+
+def load_config_env() -> None:
+    """Load ~/.openmem/config.env as fallback for unset environment variables.
+
+    Environment variables always take precedence. Values from config.env
+    are only set if the corresponding variable is not already present.
+    Safe to call multiple times (idempotent).
+    """
+    global _config_loaded
+    if _config_loaded:
+        return
+    _config_loaded = True
+
+    config_path = Path.home() / ".openmem" / "config.env"
+    if not config_path.exists():
+        return
+
+    try:
+        for line in config_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            # Only set if not already in environment
+            if key not in os.environ:
+                os.environ[key] = value
+        logger.info("Loaded config from %s", config_path)
+    except OSError as e:
+        logger.warning("Could not read config file %s: %s", config_path, e)
 
 
 def _get_env(name: str, fallback_name: Optional[str] = None, default: str = "") -> str:
@@ -32,7 +69,9 @@ def get_embedding_callback():
     """Build an embedding callback from environment configuration.
 
     Returns None if provider is "none" or no API key is available.
+    Automatically loads ~/.openmem/config.env as fallback.
     """
+    load_config_env()
     provider = _get_env("OPENMEM_EMBEDDING_PROVIDER", default="openai").lower()
 
     if provider == "none":

@@ -1010,12 +1010,12 @@ class TestIssue16ConftestFixture:
 class TestIssue17ReadmeBadges:
     """Issue 17: README.md badges must state current test/coverage numbers."""
 
-    def test_readme_badge_203_tests(self):
+    def test_readme_badge_237_tests(self):
         readme_path = Path("/Users/ashishbhatia/ClaudeProjects/OpenMem/README.md")
         assert readme_path.exists(), "README.md must exist"
         content = readme_path.read_text()
-        assert "203" in content, (
-            "README must mention '203' (passing tests badge)"
+        assert "237" in content, (
+            "README must mention '237' (passing tests badge)"
         )
 
     def test_readme_badge_98_coverage(self):
@@ -1029,9 +1029,9 @@ class TestIssue17ReadmeBadges:
         """The badge lines must be present (even if inside HTML comment)."""
         readme_path = Path("/Users/ashishbhatia/ClaudeProjects/OpenMem/README.md")
         content = readme_path.read_text()
-        # Both numbers 203 and 98 must appear somewhere
-        assert "203" in content and "98" in content, (
-            "README must contain both '203' and '98'"
+        # Both numbers 237 and 98 must appear somewhere
+        assert "237" in content and "98" in content, (
+            "README must contain both '237' and '98'"
         )
 
 

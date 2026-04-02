@@ -6,7 +6,7 @@
 [![PyPI version](https://badge.fury.io/py/openmem.svg)](https://pypi.org/project/openmem/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-203%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-237%20passing-brightgreen.svg)]()
 [![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen.svg)]()
 -->
 
@@ -41,6 +41,45 @@ mem = OpenMem(
 - **Hybrid search** -- semantic (cosine similarity) + keyword (FTS5), configurable ranking weights
 - **GDPR-ready** -- atomic deletion with `delete()` and `delete_all()`, JSON/CSV export
 - **Transparent** -- every memory is human-readable, inspectable, and auditable
+
+## Getting Started
+
+The fastest way to get OpenMem running is the interactive setup wizard:
+
+```bash
+pip install "openmem[mcp]"
+openmem-setup
+```
+
+The wizard walks you through:
+
+```
+  OpenMem Setup
+  =============
+
+  Storage path [~/.openmem/memory.db]:
+
+  Embedding provider:
+    * 1) OpenAI API
+      2) Local (Ollama)
+      3) Custom OpenAI-compatible endpoint
+      4) None (keyword search only)
+  Choose [1]: 1
+
+  OpenAI API key: sk-...
+  Embedding model [text-embedding-3-small]:
+
+    Validating connection...
+    Connection successful (1536-dimensional embeddings)
+
+  Setup complete!
+  Config saved to: /Users/you/.openmem/config.env
+
+  Next steps:
+    Start the MCP server:  openmem-mcp
+```
+
+Configuration is saved to `~/.openmem/config.env` and auto-loaded by the MCP server. Environment variables always take precedence over the config file, so you can override any setting without re-running setup.
 
 ## Quick Start
 
@@ -100,16 +139,19 @@ For a complete runnable example with mock callbacks (no API keys needed), see [`
 
 OpenMem ships with a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that exposes the full API as tools. Any MCP-compatible agent or IDE can use OpenMem as persistent memory -- Claude Desktop, Cursor, VS Code + Copilot, Windsurf, and more.
 
-### Installation
+### Installation & Setup
 
 ```bash
 pip install "openmem[mcp]"
+openmem-setup    # interactive wizard — configures storage, embedding provider, API keys
 ```
+
+If you've already run `openmem-setup`, the MCP server auto-loads your config from `~/.openmem/config.env`. No additional setup needed.
 
 ### Running the Server
 
 ```bash
-# Via entry point
+# Via entry point (auto-loads ~/.openmem/config.env)
 openmem-mcp
 
 # Or as a Python module
@@ -532,7 +574,7 @@ cd openmem
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Run tests (203 tests)
+# Run tests (237 tests)
 python -m pytest tests/ -v
 
 # Run tests with coverage (98%)
