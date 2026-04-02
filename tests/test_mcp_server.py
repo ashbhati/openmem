@@ -39,7 +39,7 @@ import openmem.mcp.providers as providers_module
 
 @pytest.fixture(autouse=True)
 def _fresh_client():
-    """Reset the singleton client between tests."""
+    """Reset the singleton client and config loader between tests."""
     server_module._client = None
     providers_module._config_loaded = False
     # Use a unique DB per test to avoid interference
@@ -80,9 +80,19 @@ class TestAddMemory:
         assert result["namespace"] == "agent_a"
         assert result["metadata"] == {"context": "UI settings"}
 
-    def test_add_invalid_type(self):
-        with pytest.raises(ValueError):
-            add_memory(user_id="u1", content="test", memory_type="invalid")
+    def test_add_invalid_type_returns_error(self):
+        """Invalid enum values should return JSON error, not raise exceptions."""
+        result = json.loads(add_memory(user_id="u1", content="test", memory_type="invalid"))
+        assert "error" in result
+        assert "invalid" in result["error"].lower()
+
+    def test_add_invalid_source_returns_error(self):
+        result = json.loads(add_memory(user_id="u1", content="test", source="bad"))
+        assert "error" in result
+
+    def test_add_invalid_lifespan_returns_error(self):
+        result = json.loads(add_memory(user_id="u1", content="test", lifespan="forever"))
+        assert "error" in result
 
 
 class TestGetMemory:
@@ -129,6 +139,10 @@ class TestListMemories:
         assert len(result) == 1
         assert result[0]["memory_type"] == "preference"
 
+    def test_list_invalid_type_returns_error(self):
+        result = json.loads(list_memories(user_id="u1", memory_types=["invalid_type"]))
+        assert "error" in result
+
 
 class TestUpdateMemory:
     def test_update_content(self):
@@ -147,6 +161,16 @@ class TestUpdateMemory:
 
     def test_update_nonexistent(self):
         result = json.loads(update_memory(memory_id="nonexistent"))
+        assert "error" in result
+
+    def test_update_invalid_type_returns_error(self):
+        added = json.loads(add_memory(user_id="u1", content="Test"))
+        result = json.loads(update_memory(memory_id=added["id"], memory_type="bad"))
+        assert "error" in result
+
+    def test_update_invalid_lifespan_returns_error(self):
+        added = json.loads(add_memory(user_id="u1", content="Test"))
+        result = json.loads(update_memory(memory_id=added["id"], lifespan="forever"))
         assert "error" in result
 
 
@@ -201,6 +225,18 @@ class TestSearchAndRecall:
         result = json.loads(search_memories(user_id="nobody", query="anything"))
         assert result == []
 
+    def test_search_invalid_memory_types_returns_error(self):
+        result = json.loads(search_memories(
+            user_id="u1", query="test", memory_types=["invalid"]
+        ))
+        assert "error" in result
+
+    def test_recall_invalid_memory_types_returns_error(self):
+        result = json.loads(recall_memories(
+            user_id="u1", query="test", memory_types=["invalid"]
+        ))
+        assert "error" in result
+
 
 class TestBuildContext:
     def test_build_context_no_memories(self):
@@ -226,11 +262,16 @@ class TestExportMemories:
         add_memory(user_id="u1", content="CSV export test")
         result = export_memories(user_id="u1", format="csv")
         assert "CSV export test" in result
-        assert "id," in result or "id\t" in result or result.startswith("id")
+        # RFC 4180: csv.writer uses comma-separated values
+        assert result.startswith("id,")
 
     def test_export_empty(self):
         result = export_memories(user_id="nobody", format="json")
         assert json.loads(result) == []
+
+    def test_export_invalid_format_returns_error(self):
+        result = json.loads(export_memories(user_id="u1", format="xml"))
+        assert "error" in result
 
 
 class TestMemoryStats:

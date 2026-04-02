@@ -67,7 +67,11 @@ def _ask_confirm(prompt: str, default: bool = True) -> bool:
     raw = input(f"  {prompt} [{hint}]: ").strip().lower()
     if not raw:
         return default
-    return raw in ("y", "yes")
+    if raw in ("y", "yes"):
+        return True
+    if raw in ("n", "no"):
+        return False
+    return default
 
 
 def _mask_key(key: str) -> str:
@@ -231,7 +235,7 @@ def _setup_openai(existing: dict[str, str]) -> dict[str, str]:
     config["OPENMEM_EMBEDDING_API_KEY"] = api_key
     config["OPENMEM_EMBEDDING_MODEL"] = model
     config["OPENMEM_EMBEDDING_BASE_URL"] = "https://api.openai.com/v1"
-    if dimensions:
+    if dimensions is not None:
         config["OPENMEM_EMBEDDING_DIMENSIONS"] = str(dimensions)
 
     return config
@@ -334,7 +338,7 @@ def _setup_custom(existing: dict[str, str]) -> dict[str, str]:
     config["OPENMEM_EMBEDDING_BASE_URL"] = base_url
     if api_key:
         config["OPENMEM_EMBEDDING_API_KEY"] = api_key
-    if dimensions:
+    if dimensions is not None:
         config["OPENMEM_EMBEDDING_DIMENSIONS"] = str(dimensions)
 
     return config

@@ -19,6 +19,7 @@ import dataclasses
 import json
 import logging
 import os
+import threading
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -44,14 +45,20 @@ mcp = FastMCP(
     ),
 )
 
-# Lazily initialized OpenMem instance
+# Lazily initialized OpenMem instance (guarded by _client_lock)
 _client: Optional[OpenMem] = None
+_client_lock = threading.Lock()
 
 
 def _get_client() -> OpenMem:
-    """Get or create the OpenMem client singleton."""
+    """Get or create the OpenMem client singleton (thread-safe)."""
     global _client
-    if _client is None:
+    if _client is not None:
+        return _client
+    with _client_lock:
+        # Double-check after acquiring lock
+        if _client is not None:
+            return _client
         load_config_env()
         storage_path = os.environ.get("OPENMEM_STORAGE_PATH", "")
         config = OpenMemConfig()
@@ -89,6 +96,29 @@ def _memory_to_result(m) -> dict[str, Any]:
     }
 
 
+def _parse_memory_type(value: str) -> MemoryType:
+    """Parse a memory type string, raising ValueError with a helpful message."""
+    try:
+        return MemoryType(value)
+    except ValueError:
+        valid = [e.value for e in MemoryType]
+        raise ValueError(f"Invalid memory_type '{value}'. Valid values: {valid}")
+
+
+def _parse_memory_types(values: Optional[list[str]]) -> Optional[list[str]]:
+    """Validate a list of memory type strings. Returns the list unchanged for the client."""
+    if values is None:
+        return None
+    for v in values:
+        _parse_memory_type(v)  # validate each, raises on bad input
+    return values
+
+
+def _error_json(message: str) -> str:
+    """Return a JSON-encoded error object."""
+    return json.dumps({"error": message})
+
+
 # --- MCP Tools ---
 
 
@@ -118,18 +148,21 @@ def add_memory(
         namespace: Isolation scope (default: "default").
         metadata: Optional key-value pairs for extra context.
     """
-    client = _get_client()
-    memory = client.add(
-        user_id=user_id,
-        content=content,
-        memory_type=MemoryType(memory_type),
-        source=MemorySource(source),
-        confidence=confidence,
-        lifespan=MemoryLifespan(lifespan),
-        namespace=namespace,
-        metadata=metadata,
-    )
-    return json.dumps(_memory_to_result(memory), indent=2)
+    try:
+        client = _get_client()
+        memory = client.add(
+            user_id=user_id,
+            content=content,
+            memory_type=MemoryType(memory_type),
+            source=MemorySource(source),
+            confidence=confidence,
+            lifespan=MemoryLifespan(lifespan),
+            namespace=namespace,
+            metadata=metadata,
+        )
+        return json.dumps(_memory_to_result(memory), indent=2)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -155,18 +188,22 @@ def search_memories(
         min_confidence: Minimum confidence threshold (0.0-1.0).
         min_strength: Minimum strength threshold (0.0-1.0).
     """
-    client = _get_client()
-    memories = client.search(
-        user_id=user_id,
-        query=query,
-        top_k=top_k,
-        namespace=namespace,
-        memory_types=memory_types,
-        min_confidence=min_confidence,
-        min_strength=min_strength,
-    )
-    results = [_memory_to_result(m) for m in memories]
-    return json.dumps(results, indent=2)
+    try:
+        _parse_memory_types(memory_types)
+        client = _get_client()
+        memories = client.search(
+            user_id=user_id,
+            query=query,
+            top_k=top_k,
+            namespace=namespace,
+            memory_types=memory_types,
+            min_confidence=min_confidence,
+            min_strength=min_strength,
+        )
+        results = [_memory_to_result(m) for m in memories]
+        return json.dumps(results, indent=2)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -193,18 +230,22 @@ def recall_memories(
         min_confidence: Minimum confidence threshold (0.0-1.0).
         min_strength: Minimum strength threshold (0.0-1.0).
     """
-    client = _get_client()
-    memories = client.recall(
-        user_id=user_id,
-        query=query,
-        top_k=top_k,
-        namespace=namespace,
-        memory_types=memory_types,
-        min_confidence=min_confidence,
-        min_strength=min_strength,
-    )
-    results = [_memory_to_result(m) for m in memories]
-    return json.dumps(results, indent=2)
+    try:
+        _parse_memory_types(memory_types)
+        client = _get_client()
+        memories = client.recall(
+            user_id=user_id,
+            query=query,
+            top_k=top_k,
+            namespace=namespace,
+            memory_types=memory_types,
+            min_confidence=min_confidence,
+            min_strength=min_strength,
+        )
+        results = [_memory_to_result(m) for m in memories]
+        return json.dumps(results, indent=2)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -225,14 +266,17 @@ def build_context(
         max_tokens: Approximate token budget for the context (default: 500).
         namespace: Memory namespace (default: "default").
     """
-    client = _get_client()
-    context = client.build_context(
-        user_id=user_id,
-        query=query,
-        max_tokens=max_tokens,
-        namespace=namespace,
-    )
-    return context if context else "No memories found for this user."
+    try:
+        client = _get_client()
+        context = client.build_context(
+            user_id=user_id,
+            query=query,
+            max_tokens=max_tokens,
+            namespace=namespace,
+        )
+        return context if context else "No memories found for this user."
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -242,11 +286,14 @@ def get_memory(memory_id: str) -> str:
     Args:
         memory_id: The memory's unique identifier.
     """
-    client = _get_client()
-    memory = client.get(memory_id)
-    if memory is None:
-        return json.dumps({"error": f"Memory '{memory_id}' not found"})
-    return json.dumps(_memory_to_result(memory), indent=2)
+    try:
+        client = _get_client()
+        memory = client.get(memory_id)
+        if memory is None:
+            return _error_json(f"Memory '{memory_id}' not found")
+        return json.dumps(_memory_to_result(memory), indent=2)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -268,18 +315,21 @@ def list_memories(
         limit: Maximum results (default: 50).
         offset: Skip first N results for pagination.
     """
-    client = _get_client()
-    types = [MemoryType(t) for t in memory_types] if memory_types else None
-    memories = client.list(
-        user_id=user_id,
-        namespace=namespace,
-        memory_types=types,
-        active_only=active_only,
-        limit=limit,
-        offset=offset,
-    )
-    results = [_memory_to_result(m) for m in memories]
-    return json.dumps(results, indent=2)
+    try:
+        types = [_parse_memory_type(t) for t in memory_types] if memory_types else None
+        client = _get_client()
+        memories = client.list(
+            user_id=user_id,
+            namespace=namespace,
+            memory_types=types,
+            active_only=active_only,
+            limit=limit,
+            offset=offset,
+        )
+        results = [_memory_to_result(m) for m in memories]
+        return json.dumps(results, indent=2)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -304,20 +354,23 @@ def update_memory(
         lifespan: New lifespan (short_term, working, long_term).
         metadata: New metadata (replaces existing).
     """
-    client = _get_client()
-    mt = MemoryType(memory_type) if memory_type else None
-    ls = MemoryLifespan(lifespan) if lifespan else None
-    memory = client.update(
-        memory_id=memory_id,
-        content=content,
-        memory_type=mt,
-        confidence=confidence,
-        lifespan=ls,
-        metadata=metadata,
-    )
-    if memory is None:
-        return json.dumps({"error": f"Memory '{memory_id}' not found"})
-    return json.dumps(_memory_to_result(memory), indent=2)
+    try:
+        mt = _parse_memory_type(memory_type) if memory_type else None
+        ls = MemoryLifespan(lifespan) if lifespan else None
+        client = _get_client()
+        memory = client.update(
+            memory_id=memory_id,
+            content=content,
+            memory_type=mt,
+            confidence=confidence,
+            lifespan=ls,
+            metadata=metadata,
+        )
+        if memory is None:
+            return _error_json(f"Memory '{memory_id}' not found")
+        return json.dumps(_memory_to_result(memory), indent=2)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -327,29 +380,35 @@ def delete_memory(memory_id: str) -> str:
     Args:
         memory_id: The memory to delete.
     """
-    client = _get_client()
-    deleted = client.delete(memory_id)
-    return json.dumps({
-        "deleted": deleted,
-        "memory_id": memory_id,
-    })
+    try:
+        client = _get_client()
+        deleted = client.delete(memory_id)
+        return json.dumps({
+            "deleted": deleted,
+            "memory_id": memory_id,
+        })
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
 def delete_all_memories(user_id: str) -> str:
-    """Delete ALL memories for a user (GDPR right to erasure).
+    """Delete ALL memories for a user across all namespaces (GDPR right to erasure).
 
-    This is irreversible. Use with caution.
+    This is irreversible and affects all namespaces for the given user.
 
     Args:
         user_id: The user whose memories to delete.
     """
-    client = _get_client()
-    count = client.delete_all(user_id)
-    return json.dumps({
-        "deleted_count": count,
-        "user_id": user_id,
-    })
+    try:
+        client = _get_client()
+        count = client.delete_all(user_id)
+        return json.dumps({
+            "deleted_count": count,
+            "user_id": user_id,
+        })
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -360,8 +419,11 @@ def export_memories(user_id: str, format: str = "json") -> str:
         user_id: Whose memories to export.
         format: "json" or "csv".
     """
-    client = _get_client()
-    return client.export(user_id, format=format)
+    try:
+        client = _get_client()
+        return client.export(user_id, format=format)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
@@ -369,34 +431,44 @@ def memory_stats() -> str:
     """Get system health stats and recommendations.
 
     Returns total/active/deleted counts, average strength,
-    and actionable recommendations.
+    and actionable recommendations. Stats are across all users.
     """
-    client = _get_client()
-    stats = client.stats()
-    return json.dumps(dataclasses.asdict(stats), indent=2)
+    try:
+        client = _get_client()
+        stats = client.stats()
+        return json.dumps(dataclasses.asdict(stats), indent=2)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
 def run_decay() -> str:
-    """Run memory decay on all active memories.
+    """Run memory decay on all active memories across all users.
 
     Applies ACT-R power-law decay — memories that haven't been accessed
     recently lose strength. Call periodically (e.g., daily).
+    This affects all users in the database.
     """
-    client = _get_client()
-    result = client.decay()
-    return json.dumps(dataclasses.asdict(result), indent=2)
+    try:
+        client = _get_client()
+        result = client.decay()
+        return json.dumps(dataclasses.asdict(result), indent=2)
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 @mcp.tool()
 def purge_memories() -> str:
-    """Permanently remove all soft-deleted (decayed) memories.
+    """Permanently remove all soft-deleted (decayed) memories across all users.
 
-    Returns the count of purged memories.
+    Returns the count of purged memories. This affects all users in the database.
     """
-    client = _get_client()
-    count = client.purge()
-    return json.dumps({"purged_count": count})
+    try:
+        client = _get_client()
+        count = client.purge()
+        return json.dumps({"purged_count": count})
+    except (ValueError, TypeError) as e:
+        return _error_json(str(e))
 
 
 # --- Entry point ---
@@ -404,6 +476,7 @@ def purge_memories() -> str:
 
 def main():
     """Run the OpenMem MCP server over stdio."""
+    # Log to stderr only — stdout is reserved for MCP JSON-RPC protocol
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",

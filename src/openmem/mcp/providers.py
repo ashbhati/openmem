@@ -15,9 +15,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Optional
+
+# Timeout for embedding API calls (seconds)
+EMBEDDING_TIMEOUT_SECONDS = 30
 
 logger = logging.getLogger("openmem.mcp")
 
@@ -111,8 +115,25 @@ def get_embedding_callback():
             method="POST",
         )
 
-        with urllib.request.urlopen(req) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=EMBEDDING_TIMEOUT_SECONDS) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            logger.error("Embedding API HTTP error %d for model %s", e.code, model)
+            raise RuntimeError(
+                f"Embedding API returned HTTP {e.code}. "
+                "Check your API key and model configuration."
+            ) from e
+        except urllib.error.URLError as e:
+            logger.error("Embedding API connection error: %s", e.reason)
+            raise RuntimeError(
+                f"Cannot connect to embedding API at {base_url}: {e.reason}"
+            ) from e
+        except TimeoutError:
+            logger.error("Embedding API timed out after %ds", EMBEDDING_TIMEOUT_SECONDS)
+            raise RuntimeError(
+                f"Embedding API timed out after {EMBEDDING_TIMEOUT_SECONDS}s"
+            ) from None
 
         return result["data"][0]["embedding"]
 
